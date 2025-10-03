@@ -1,93 +1,84 @@
 from pulp import *
 import time
 
-print("ТРАНСПОРТНАЯ ЗАДАЧА - ВАРИАНТ 8")
+# Исходные данные варианта 8
+a = [200, 400, 600, 200, 200]  # запасы поставщиков
+b = [200, 400, 400, 300, 500]  # спрос потребителей
 
-demand = [200, 400, 400, 300, 500]  # потребности потребителей
-supply = [200, 400, 600, 200, 200]  # запасы поставщиков 
+c = [[1, 6, 9, 3, 4],  
+     [3, 2, 2, 4, 5],  
+     [4, 5, 4, 7, 6],  
+     [1, 4, 3, 9, 8],  
+     [7, 9, 7, 1, 9]]   # тарифы
 
-# матрица тарифов
-cost_matrix = [
-    [1, 6, 9, 3, 4],  
-    [3, 2, 2, 4, 5],  
-    [4, 5, 4, 7, 6],  
-    [1, 4, 3, 9, 8],  
-    [7, 9, 7, 1, 9]   
-]
+print("Транспортная задача. Вариант 8")
+print(f"Запасы: {a}, сумма = {sum(a)}")
+print(f"Спрос: {b}, сумма = {sum(b)}")
 
-print("Дано:")
-print(f"Запасы поставщиков: {supply} (сумма = {sum(supply)})")
-print(f"Потребности потребителей: {demand} (сумма = {sum(demand)})")
-
-#проверка сбалансированности
-total_supply = sum(supply)
-total_demand = sum(demand)
-
-if total_supply != total_demand:
-    print(f"\nЗадача несбалансированная! Разница: {abs(total_supply - total_demand)}")
-    if total_supply < total_demand: #нужен доп. поставщик
-        supply.append(total_demand - total_supply)
-        cost_matrix.append([0, 0, 0, 0, 0]) #добавление поставщика с запасом
+# Проверка на сбалансированность
+if sum(a) != sum(b):
+    print("Задача открытая")
+    if sum(a) < sum(b):
+        a.append(sum(b) - sum(a))
+        c.append([0] * len(b))
         print("Добавлен фиктивный поставщик")
     else:
-        demand.append(total_supply - total_demand)
-        for row in cost_matrix:
+        b.append(sum(a) - sum(b))
+        for row in c:
             row.append(0)
         print("Добавлен фиктивный потребитель")
+else:
+    print("Задача закрытая")
 
-m = len(supply)
-n = len(demand)
+m, n = len(a), len(b)
 
-print(f"\nРазмерность задачи: {m} поставщиков × {n} потребителей")
+# Метод северо-западного угла
+print("\nМетод северо-западного угла:")
+supply = a.copy()
+demand = b.copy()
+nw_plan = [[0]*n for _ in range(m)]
+i = j = 0
+nw_cost = 0
 
-#решение
-print("Решение методом PULP")
+while i < m and j < n:
+    x = min(supply[i], demand[j])
+    nw_plan[i][j] = x
+    nw_cost += x * c[i][j]
+    supply[i] -= x
+    demand[j] -= x
+    if supply[i] == 0:
+        i += 1
+    if demand[j] == 0:
+        j += 1
 
-start_time = time.time()
+print(f"Стоимость по СЗУ: {nw_cost}")
 
-#создание переменных
-variables = []
+# Решение через PuLP
+prob = LpProblem("transport", LpMinimize)
+
+# Переменные
+x = {}
 for i in range(m):
     for j in range(n):
-        variables.append(LpVariable(f"x_{i+1}_{j+1}", lowBound=0))  
+        x[i,j] = LpVariable(f"x{i+1}_{j+1}", lowBound=0)
 
-#создание задачи
-problem = LpProblem("Transport_Problem", LpMinimize)
+# Целевая функция
+prob += lpSum(c[i][j] * x[i,j] for i in range(m) for j in range(n))
 
-#целевая функция
-cost_coeffs = []
+# Ограничения
 for i in range(m):
-    for j in range(n):
-        cost_coeffs.append(cost_matrix[i][j]) 
-
-problem += lpDot(cost_coeffs, variables), "Total_Cost" 
-
-#ограничения поставщиков
-for i in range(m):
-    constraint_vars = variables[i*n : (i+1)*n] 
-    problem += lpSum(constraint_vars) == supply[i], f"Supply_{i+1}" 
-
-#ограничения потребителей
+    prob += lpSum(x[i,j] for j in range(n)) == a[i]
 for j in range(n):
-    constraint_vars = [variables[i*n + j] for i in range(m)]
-    problem += lpSum(constraint_vars) == demand[j], f"Demand_{j+1}"
+    prob += lpSum(x[i,j] for i in range(m)) == b[j]
 
-problem.solve(PULP_CBC_CMD(msg=0)) 
-pulp_time = time.time() - start_time
+prob.solve(PULP_CBC_CMD(msg=0))
 
-# ВЫВОД РЕЗУЛЬТАТОВ
-print("Оптимальный план перевозок:")
-
+print("\nОптимальное решение:")
 total_cost = 0
-for variable in problem.variables():
-    if variable.varValue > 0.001: 
-        parts = variable.name.split('_')
-        supplier = int(parts[1])  
-        consumer = int(parts[2])  
-        amount = variable.varValue
-        cost = amount * cost_matrix[supplier-1][consumer-1] 
-        total_cost += cost
-        print(f"Поставщик{supplier} → Потребитель{consumer}: {amount:.1f} ед. × {cost_matrix[supplier-1][consumer-1]} = {cost:.1f}")
+for i in range(m):
+    for j in range(n):
+        if x[i,j].varValue > 0:
+            print(f"x{i+1}_{j+1} = {x[i,j].varValue}")
+            total_cost += x[i,j].varValue * c[i][j]
 
-print(f"Минимальная стоимость: {total_cost:.1f}")
-print(f"Время выполнения: {pulp_time:.4f} сек")
+print(f"Минимальная стоимость: {total_cost}")
